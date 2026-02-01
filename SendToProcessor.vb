@@ -1,184 +1,4 @@
-﻿'Option Explicit On
-'Option Strict On
-
-
-''' IMPORTANTE:
-''' "oWillBeCopied" es una lista que puede o no contener todos los archivos que se van a copiar en funcion de su tamaño (lenght)
-''' Si "oWillBeCopied" se declara de un tamaño menor a la cantidad de archivos que se van a copiar,
-''' no da error, pero el renombrado solo se lleva a cabo con la cantidad que esa lista contiene. Si "oWillBeCopied" es mas grande, da error.
-
-''' Cauando se utilizan referencias externas (por ejemplo utilizando el módulo "Structure Design" hay archivos de extension .CATMaterial o también
-''' Parts que estan en memoria pero no cargados (unloaded), esto no es tenido en cuenta por el diccionario de PartNumbers.
-''' Es por esto que, si el product raíz "arrastra archivos que son usados como referencia externas como es el caso de los croquiz de los perfiles,
-''' el oDic no los computa y el oDic.Count va a dar diferente a la cantidad "oWillBeCopied.lenght")
-
-''' También, en el procedimiento de verificar si los archivos ya existen en el directorio destino,
-''' no se tienen en cuenta las referencias externas (.CATMaterial, croquiza de CATParts, etc,)
-''' entonces, al querer pisar nuevamente todos los arhivos, el número de "n archivos ya existen" puede diferir de lo que contiene "oWillBeCopied"
-
-''' (*) Me fijo si el dicionario ya contiene un nombre de los nuevos,
-''' porque lo que estaría pasando es que quiera asignar un nombre nuevo que es identico a uno que ya existe
-''' Es decir quiere dar el nombre "A" a una pieza, pero ese nombre "A" ya es el nombre de otro archivo de mas abajo.
-''' Si ese es el caso, entonces no puedo renombrar en este momento.
-''' Lo que hace es, guarda ese par en el diccionario "oDicNoRenamed" y lo procesa luego cuando la pieza de mas abajo, ya no es mas "A"
-''' Utilizar un Segundo cilco de renombrado: NO FUNCIONA SIEMPRE!
-
-''' Conclusión:
-''' Es preferible utilizar el servicio "SendTo" sin referencias externas, es decir, los product que forma el Structure Design,
-''' cambiarlos a "allCatPart" o eliminar las referencias externas, para que solo queden archivos del tipo "CATProdcut" y "CATPart".
-
-''' Al realizar el SendTo el comando no tiene en cuanta si el product tiene propiedades como ser "Description", "Source", "Definition", etc.
-''' Entonces al hacer el SendTo, esas propiedades no se copian al nuevo archivo. Hay que realizar un proceso aparte para copiar esas propiedades.
-
-
-''' Una advertencia sobre el tamaño del Array
-''' Como estás manteniendo la línea: Dim oWillBeCopied(oDic1.Count - 1) As Object
-''' Si el producto raíz tiene referencias externas (como un .CATMaterial que no está en tu diccionario), el SendTo querrá meterlo en el array.
-''' Como tu array tiene el tamaño exacto de tu diccionario, y el raíz ya ocupa un lugar,
-''' si hay elementos "extra" que CATIA detecta, la línea GetListOfToBeCopiedFiles podría darte el Error de rango esperado que vimos antes.
-''' El único riesgo técnico sigue siendo que CATIA encuentre más archivos de los que tu diccionario tiene contabilizados
-
-
-
-''' Desajuste de Conteo: El diccionario cuenta elementos del árbol, pero SendTo cuenta archivos físicos en disco;
-''' basta con que exista un solo archivo "extra" (como el Producto Raíz o un .CATMaterial) para que la lista
-''' supere el tamaño del array.Error de Rango Crítico: Al ser un objeto COM, SendTo no puede redimensionar un array de .NET;
-''' si intenta escribir el archivo $n+1$ en un espacio de $n$, el programa se detiene inmediatamente con una excepción de rango.
-''' Invisibilidad de Dependencias:
-''' El método asume que tu estructura lógica es idéntica a la estructura de archivos, ignorando que CATIA arrastra
-''' vínculos ocultos que no aparecen en el árbol de productos pero que el servicio de copia está obligado a procesar.
-
-
-
-
-
-
-'Public Class SendToProcessor
-
-'    Private ReadOnly _app As INFITF.Application
-
-'    Private _renameMap As Collections.Specialized.StringDictionary
-'    Private _pendingRenames As Collections.Specialized.StringDictionary
-
-'    Public Sub New(catiaApp As INFITF.Application)
-'        _app = catiaApp
-'        _renameMap = New Collections.Specialized.StringDictionary()
-'        _pendingRenames = New Collections.Specialized.StringDictionary()
-'    End Sub
-
-
-'    ''' <summary>
-'    ''' Ejecuta el proceso completo: Mapeo del árbol, gestión de nombres y copiado físico.
-'    ''' </summary>
-'    ''' <param name="rootProduct">Producto raíz de CATIA</param>
-'    ''' <param name="targetDir">Carpeta de destino</param>
-'    Public Sub Execute(rootProduct As ProductStructureTypeLib.Product, targetDir As String)
-'        ' 1. Limpieza de diccionarios para una nueva ejecución
-'        _renameMap.Clear()
-'        _pendingRenames.Clear()
-
-'        ' 2. Mapeo recursivo: Llenamos el diccionario (NombreArchivo -> PartNumber)
-'        FillMap(rootProduct)
-
-'        ' 3. Configuración del servicio SendTo
-'        Dim sendToService As INFITF.SendToService = _app.CreateSendTo()
-'        Dim rootDoc = CType(rootProduct.ReferenceProduct.Parent, ProductStructureTypeLib.ProductDocument)
-
-'        sendToService.SetInitialFile(rootDoc.FullName)
-'        sendToService.SetDirectoryFile(targetDir)
-
-'        ' 4. Gestión del Array (Solución al error de rango)
-'        ' Sumamos un margen (ej. 50) para absorber referencias externas (.CATMaterial, cgr, etc.) 
-'        ' que no están en el árbol de productos pero que SendTo detecta en disco.
-'        Dim oWillBeCopied(_renameMap.Count + 50) As Object
-'        sendToService.GetListOfToBeCopiedFiles(oWillBeCopied)
-
-'        ' 5. PRIMER CICLO: Renombrado directo
-'        For Each objPath In oWillBeCopied
-'            If objPath Is Nothing Then Continue For
-
-'            Dim fullPath As String = objPath.ToString()
-'            Dim fileName As String = IO.Path.GetFileName(fullPath)
-
-'            If _renameMap.ContainsKey(fileName) Then
-'                Dim newName As String = _renameMap(fileName)
-'                Dim currentNameNoExt As String = IO.Path.GetFileNameWithoutExtension(fileName)
-
-'                If newName <> currentNameNoExt Then
-'                    ' Verificamos colisión: ¿El nombre nuevo ya existe en el set de archivos actual?
-'                    If Not ExistsInCollection(newName, oWillBeCopied) Then
-'                        sendToService.SetRenameFile(fileName, newName)
-'                    Else
-'                        ' Si existe, lo guardamos para la segunda pasada
-'                        If Not _pendingRenames.ContainsKey(fileName) Then
-'                            _pendingRenames.Add(fileName, newName)
-'                        End If
-'                    End If
-'                End If
-'            End If
-'        Next
-
-
-'        ' 6. SEGUNDO CICLO: Resolución de pendientes
-'        If _pendingRenames.Count > 0 Then
-'            For Each fileKey As String In _pendingRenames.Keys
-'                Try
-'                    sendToService.SetRenameFile(fileKey, _pendingRenames(fileKey))
-'                Catch
-'                    Console.WriteLine("Conflicto persistente en: " & fileKey)
-'                End Try
-'            Next
-'        End If
-
-'        ' 7. Ejecución Final
-'        Try
-'            sendToService.Run()
-'            MsgBox("SendTo finalizado con éxito." & vbCrLf & "Archivos en mapa: " & _renameMap.Count & vbCrLf & "Pendientes resueltos: " & _pendingRenames.Count)
-'        Catch ex As Exception
-'            MsgBox("Error al ejecutar SendTo: " & ex.Message, MsgBoxStyle.Critical)
-'        End Try
-'    End Sub
-
-'    ' --- MÉTODOS PRIVADOS DE APOYO ---
-
-
-'    Private Sub FillMap(current As ProductStructureTypeLib.Product)
-
-'        Try
-'            ' Obtenemos el documento padre del ReferenceProduct
-'            Dim parentDoc = CType(current.ReferenceProduct.Parent, INFITF.Document)
-'            Dim docName As String = parentDoc.Name
-'            Dim pn As String = current.PartNumber
-
-'            ' Solo agregamos si no existe (evita errores con instancias repetidas)
-'            If Not _renameMap.ContainsKey(docName) Then
-'                _renameMap.Add(docName, pn)
-'            End If
-
-'            ' Recurrencia sobre los hijos
-'            For Each child As ProductStructureTypeLib.Product In current.Products
-'                FillMap(child)
-'            Next
-'        Catch
-'            ' Omitimos errores de componentes unloaded o links rotos
-'        End Try
-'    End Sub
-
-
-'    Private Function ExistsInCollection(nameWithNoExt As String, collection As Object()) As Boolean
-'        For Each item In collection
-'            If item IsNot Nothing AndAlso item.ToString().ToUpper().Contains(nameWithNoExt.ToUpper() & ".") Then
-'                Return True
-'            End If
-'        Next
-'        Return False
-'    End Function
-
-
-'End Class
-
-
-Option Explicit On
+﻿Option Explicit On
 Option Strict On
 
 Imports System.Collections.Specialized
@@ -293,5 +113,62 @@ Public Class SendToProcessor
     End Sub
 
 End Class
+
+
+
+
+
+
+
+' IMPORTANTE:
+' "oWillBeCopied" es una lista que puede o no contener todos los archivos que se van a copiar en funcion de su tamaño (lenght)
+' Si "oWillBeCopied" se declara de un tamaño menor a la cantidad de archivos que se van a copiar,
+' no da error, pero el renombrado solo se lleva a cabo con la cantidad que esa lista contiene. Si "oWillBeCopied" es mas grande, da error.
+
+' Cauando se utilizan referencias externas (por ejemplo utilizando el módulo "Structure Design" hay archivos de extension .CATMaterial o también
+' Parts que estan en memoria pero no cargados (unloaded), esto no es tenido en cuenta por el diccionario de PartNumbers.
+' Es por esto que, si el product raíz "arrastra archivos que son usados como referencia externas como es el caso de los croquiz de los perfiles,
+' el oDic no los computa y el oDic.Count va a dar diferente a la cantidad "oWillBeCopied.lenght")
+
+' También, en el procedimiento de verificar si los archivos ya existen en el directorio destino,
+' no se tienen en cuenta las referencias externas (.CATMaterial, croquiza de CATParts, etc,)
+' entonces, al querer pisar nuevamente todos los arhivos, el número de "n archivos ya existen" puede diferir de lo que contiene "oWillBeCopied"
+
+' (*) Me fijo si el dicionario ya contiene un nombre de los nuevos,
+' porque lo que estaría pasando es que quiera asignar un nombre nuevo que es identico a uno que ya existe
+' Es decir quiere dar el nombre "A" a una pieza, pero ese nombre "A" ya es el nombre de otro archivo de mas abajo.
+' Si ese es el caso, entonces no puedo renombrar en este momento.
+' Lo que hace es, guarda ese par en el diccionario "oDicNoRenamed" y lo procesa luego cuando la pieza de mas abajo, ya no es mas "A"
+' Utilizar un Segundo cilco de renombrado: NO FUNCIONA SIEMPRE!
+
+' Conclusión:
+' Es preferible utilizar el servicio "SendTo" sin referencias externas, es decir, los product que forma el Structure Design,
+' cambiarlos a "allCatPart" o eliminar las referencias externas, para que solo queden archivos del tipo "CATProdcut" y "CATPart".
+
+' Al realizar el SendTo el comando no tiene en cuanta si el product tiene propiedades como ser "Description", "Source", "Definition", etc.
+' Entonces al hacer el SendTo, esas propiedades no se copian al nuevo archivo. Hay que realizar un proceso aparte para copiar esas propiedades.
+
+
+' Una advertencia sobre el tamaño del Array
+' Como estás manteniendo la línea: Dim oWillBeCopied(oDic1.Count - 1) As Object
+' Si el producto raíz tiene referencias externas (como un .CATMaterial que no está en tu diccionario), el SendTo querrá meterlo en el array.
+' Como tu array tiene el tamaño exacto de tu diccionario, y el raíz ya ocupa un lugar,
+' si hay elementos "extra" que CATIA detecta, la línea GetListOfToBeCopiedFiles podría darte el Error de rango esperado que vimos antes.
+' El único riesgo técnico sigue siendo que CATIA encuentre más archivos de los que tu diccionario tiene contabilizados
+
+
+
+' Desajuste de Conteo: El diccionario cuenta elementos del árbol, pero SendTo cuenta archivos físicos en disco;
+' basta con que exista un solo archivo "extra" (como el Producto Raíz o un .CATMaterial) para que la lista
+' supere el tamaño del array.Error de Rango Crítico: Al ser un objeto COM, SendTo no puede redimensionar un array de .NET;
+' si intenta escribir el archivo $n+1$ en un espacio de $n$, el programa se detiene inmediatamente con una excepción de rango.
+' Invisibilidad de Dependencias:
+' El método asume que tu estructura lógica es idéntica a la estructura de archivos, ignorando que CATIA arrastra
+' vínculos ocultos que no aparecen en el árbol de productos pero que el servicio de copia está obligado a procesar.
+
+
+
+
+
 
 

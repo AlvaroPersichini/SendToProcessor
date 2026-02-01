@@ -4,7 +4,8 @@ Module Program
 
     Sub Main()
 
-        ' --- 1. CONEXIÓN Y VALIDACIÓN ---
+
+        ' CATIA Session
         Dim session As New CatiaSession()
         If Not session.IsReady Then
             MsgBox(session.Description)
@@ -14,7 +15,8 @@ Module Program
         session.Application.DisplayFileAlerts = False
 
 
-        ' --- GESTIÓN DE DIRECTORIOS ---
+
+        ' Directorios
         Dim baseDir As String = "C:\Temp"
         Dim timestamp As String = System.DateTime.Now.ToString("yyyyMMdd_HHmmss")
         Dim folderPath As String = System.IO.Path.Combine(baseDir, "Export_" & timestamp)
@@ -29,12 +31,17 @@ Module Program
 
 
 
-        ' -------------------
-        ' SendToWithPartN
-        ' -------------------
-        ' 3. Ejecutar el Manager
+
+        ' Ejecutar eSendTo
         Dim stProcessor As New SendToProcessor(session.Application)
         stProcessor.Execute(session.RootProduct, folderPath)
+
+
+
+        ' Limpieza COM
+        Dim cleaner As New ComCleaner()
+        cleaner.Release(oProduct, session.Application)
+
 
 
     End Sub
