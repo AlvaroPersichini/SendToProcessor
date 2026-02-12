@@ -1,7 +1,6 @@
 ﻿Option Explicit On
 Option Strict On
 
-Imports System.Collections.Specialized
 
 Public Class SendToProcessor
     Private ReadOnly _app As INFITF.Application
@@ -10,28 +9,23 @@ Public Class SendToProcessor
         _app = catiaApp
     End Sub
 
-    ''' <summary>
-    ''' Esta función replica exactamente tu lógica original pero encapsulada.
-    ''' </summary>
+    '
     Public Sub Execute(oProduct As ProductStructureTypeLib.Product, strDir As String)
-        ' 1. Generamos el diccionario usando tu lógica de mapeo
-        Dim oDic1 As StringDictionary = GetMap(oProduct)
 
-        ' 2. Obtenemos el Documento Raíz
+        Dim oDic1 As Specialized.StringDictionary = GetMap(oProduct)
         Dim oProductDocument = CType(oProduct.ReferenceProduct.Parent, ProductStructureTypeLib.ProductDocument)
-
-        ' 3. Ejecutamos TU lógica de SendTo (sin cambios en el algoritmo de renombrado)
         SendTOWPN(oProductDocument, oDic1, strDir)
+
     End Sub
 
-    ' --- TU LÓGICA DE MAPEO (ADAPTADA A LA CLASE) ---
-    Private Function GetMap(objRoot As ProductStructureTypeLib.Product) As StringDictionary
-        Dim dicc As New StringDictionary()
+
+    Private Function GetMap(objRoot As ProductStructureTypeLib.Product) As Specialized.StringDictionary
+        Dim dicc As New Specialized.StringDictionary()
         FillMap(objRoot, dicc)
         Return dicc
     End Function
 
-    Private Sub FillMap(current As ProductStructureTypeLib.Product, ByRef dicc As StringDictionary)
+    Private Sub FillMap(current As ProductStructureTypeLib.Product, ByRef dicc As Specialized.StringDictionary)
         Try
             Dim parentObj As Object = current.ReferenceProduct.Parent
             Dim docName As String = CType(parentObj, INFITF.Document).Name
@@ -45,24 +39,24 @@ Public Class SendToProcessor
                 FillMap(child, dicc)
             Next
         Catch
-            ' Mantenemos el comportamiento silencioso ante links rotos
+
         End Try
     End Sub
 
-    ' --- TU LÓGICA DE SENDTO ORIGINAL (INTACTA) ---
-    Private Sub SendTOWPN(oProductDocument As ProductStructureTypeLib.ProductDocument, oDic1 As StringDictionary, strDir As String)
+
+    Private Sub SendTOWPN(oProductDocument As ProductStructureTypeLib.ProductDocument, oDic1 As Specialized.StringDictionary, strDir As String)
 
         Dim SendTo As INFITF.SendToService = _app.CreateSendTo()
         SendTo.SetInitialFile(oProductDocument.FullName)
 
-        ' Respeto tu dimensionamiento original: oDic1.Count - 1
+
         Dim oWillBeCopied(oDic1.Count - 1) As Object
         SendTo.GetListOfToBeCopiedFiles(oWillBeCopied)
         SendTo.SetDirectoryFile(strDir)
 
-        Dim oDicPendientes As New StringDictionary()
+        Dim oDicPendientes As New Specialized.StringDictionary()
 
-        ' --- TU CICLO DE RENOMBRADO (PRIMERA PASADA) ---
+        ' RENOMBRADO (PRIMERA PASADA)
         For i As Integer = 0 To UBound(oWillBeCopied)
             Dim strFullPath As String = oWillBeCopied(i).ToString()
             Dim lastSlash As Integer = strFullPath.LastIndexOf("\")
@@ -93,21 +87,18 @@ Public Class SendToProcessor
             End If
         Next
 
-        ' --- TU SEGUNDO CICLO DE RENOMBRADO ---
+        ' Renombrado Segunda pasada
         If oDicPendientes.Count > 0 Then
             Dim llavesPendientes(oDicPendientes.Count - 1) As String
             oDicPendientes.Keys.CopyTo(llavesPendientes, 0)
-
             For Each strFileKey As String In llavesPendientes
                 If strFileKey Is Nothing Then Continue For
                 Try
                     SendTo.SetRenameFile(strFileKey, oDicPendientes(strFileKey))
                 Catch
-                    ' Log de consola como tenías
                 End Try
             Next
         End If
-
         SendTo.Run()
         MsgBox("SendTo finalizado con éxito." & vbCrLf & "Pendientes intentados: " & oDicPendientes.Count)
     End Sub

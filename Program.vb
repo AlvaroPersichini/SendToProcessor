@@ -4,7 +4,6 @@ Module Program
 
     Sub Main()
 
-
         ' CATIA Session
         Dim session As New CatiaSession()
         If Not session.IsReady Then
@@ -15,14 +14,11 @@ Module Program
         session.Application.DisplayFileAlerts = False
 
 
-
         ' Directorios
         Dim baseDir As String = "C:\Temp"
-        Dim timestamp As String = System.DateTime.Now.ToString("yyyyMMdd_HHmmss")
-        Dim folderPath As String = System.IO.Path.Combine(baseDir, "Export_" & timestamp)
-        ' Verificamos si la carpeta existe, y si no, la creamos
+        Dim timestamp As String = Now.ToString("yyyyMMdd_HHmmss")
+        Dim folderPath As String = IO.Path.Combine(baseDir, "Export_" & timestamp)
         If Not IO.Directory.Exists(folderPath) Then
-            ' CreateDirectory crea toda la ruta necesaria (incluyendo carpetas padre si no existen)
             IO.Directory.CreateDirectory(folderPath)
             Console.WriteLine("Carpeta creada: " & folderPath)
         Else
@@ -30,12 +26,9 @@ Module Program
         End If
 
 
-
-
         ' Ejecutar eSendTo
         Dim stProcessor As New SendToProcessor(session.Application)
         stProcessor.Execute(session.RootProduct, folderPath)
-
 
 
         ' Limpieza COM
@@ -43,8 +36,6 @@ Module Program
         cleaner.Release(oProduct, session.Application)
 
 
-
     End Sub
-
 
 End Module
